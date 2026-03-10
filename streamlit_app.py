@@ -216,15 +216,16 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📌 Kategori", "📈 Numerik", "🧮 C
 with tab1:
     st.subheader("📌 Distribusi kategori")
 
-    if len(df.columns) == 0:
-        st.warning("Sheet kosong setelah filter.")
+    category_options = [c for c in cat_cols if not pd.api.types.is_numeric_dtype(df[c])]
+
+    if not category_options:
+        st.warning("Tidak ada kolom kategori yang cocok untuk distribusi.")
         st.stop()
 
-    default_col = cat_cols[0] if cat_cols else df.columns[0]
     col_choice = st.selectbox(
         "Pilih kolom kategori",
-        options=list(df.columns),
-        index=list(df.columns).index(default_col)
+        options=category_options,
+        index=0
     )
 
     top_n = st.slider("Top N kategori", min_value=5, max_value=60, value=20, step=1)
@@ -301,29 +302,122 @@ with tab1:
 # ---------- TAB 2: Numeric ----------
 with tab2:
     st.subheader("📈 Analisa numerik")
+
     if not num_cols:
         st.info("Tidak ada kolom numerik terdeteksi.")
     else:
-        num_choice = st.selectbox("Pilih kolom numerik", options=num_cols, index=0)
-        s = pd.to_numeric(df[num_choice], errors="coerce")
-        st.write("Statistik ringkas:")
-        stats = pd.DataFrame({
-            "metric": ["count", "missing", "mean", "median", "min", "max", "std"],
-            "value": [
-                int(s.notna().sum()),
-                int(s.isna().sum()),
-                float(s.mean()) if s.notna().any() else np.nan,
-                float(s.median()) if s.notna().any() else np.nan,
-                float(s.min()) if s.notna().any() else np.nan,
-                float(s.max()) if s.notna().any() else np.nan,
-                float(s.std()) if s.notna().any() else np.nan,
-            ]
-        })
-        st.dataframe(stats, use_container_width=True)
+        numeric_chart_mode = st.radio(
+            "Mode chart numerik",
+            ["Histogram", "Bar", "Pie"],
+            horizontal=True,
+            index=0
+        )
 
-        bins = st.slider("Jumlah bins histogram", 5, 80, 30)
-        fig = px.histogram(df, x=num_choice, nbins=bins)
-        st.plotly_chart(fig, use_container_width=True)
+        if numeric_chart_mode == "Histogram":
+            num_choice = st.selectbox("Pilih kolom numerik", options=num_cols, index=0)
+            s = pd.to_numeric(df[num_choice], errors="coerce")
+
+            st.write("Statistik ringkas:")
+            stats = pd.DataFrame({
+                "metric": ["count", "missing", "mean", "median", "min", "max", "std"],
+                "value": [
+                    int(s.notna().sum()),
+                    int(s.isna().sum()),
+                    float(s.mean()) if s.notna().any() else np.nan,
+                    float(s.median()) if s.notna().any() else np.nan,
+                    float(s.min()) if s.notna().any() else np.nan,
+                    float(s.max()) if s.notna().any() else np.nan,
+                    float(s.std()) if s.notna().any() else np.nan,
+                ]
+            })
+            st.dataframe(stats, use_container_width=True)
+
+            bins = st.slider("Jumlah bins histogram", 5, 80, 30)
+            fig = px.histogram(df, x=num_choice, nbins=bins)
+            st.plotly_chart(fig, use_container_width=True)
+
+        else:
+            category_options = [c for c in cat_cols if not pd.api.types.is_numeric_dtype(df[c])]
+
+            if not category_options:
+                st.warning("Tidak ada kolom kategori untuk dipasangkan dengan kolom numerik.")
+            else:
+                c1, c2 = st.columns(2)
+                with c1:
+                    label_col = st.selectbox("Kolom kategori/label", options=category_options, index=0)
+                with c2:
+                    value_col = st.selectbox("Kolom nilai/numerik", options=num_cols, index=0)
+
+                agg_mode = st.radio(
+                    "Agregasi nilai",
+                    ["Sum", "Average", "Median", "Min", "Max"],
+                    horizontal=True,
+                    index=0
+                )
+
+                top_n_num = st.slider("Top N kategori (numerik)", min_value=5, max_value=60, value=20, step=1)
+
+                num_label_mode = st.radio(
+                    "Label chart numerik",
+                    ["Value", "Percent", "Value + Percent"],
+                    horizontal=True,
+                    index=2
+                )
+
+                tmp = df[[label_col, value_col]].copy()
+                tmp[value_col] = pd.to_numeric(tmp[value_col], errors="coerce")
+                tmp = tmp.dropna(subset=[label_col, value_col])
+
+                if tmp.empty:
+                    st.info("Tidak ada data valid setelah pembersihan.")
+                else:
+                    if agg_mode == "Sum":
+                        agg_df = tmp.groupby(label_col, dropna=False)[value_col].sum().reset_index()
+                    elif agg_mode == "Average":
+                        agg_df = tmp.groupby(label_col, dropna=False)[value_col].mean().reset_index()
+                    elif agg_mode == "Median":
+                        agg_df = tmp.groupby(label_col, dropna=False)[value_col].median().reset_index()
+                    elif agg_mode == "Min":
+                        agg_df = tmp.groupby(label_col, dropna=False)[value_col].min().reset_index()
+                    else:
+                        agg_df = tmp.groupby(label_col, dropna=False)[value_col].max().reset_index()
+
+                    agg_df = agg_df.sort_values(value_col, ascending=False).head(top_n_num)
+                    agg_df["pct"] = (agg_df[value_col] / agg_df[value_col].sum() * 100).round(1)
+
+                    if num_label_mode == "Value":
+                        agg_df["label"] = agg_df[value_col].round(2).astype(str)
+                    elif num_label_mode == "Percent":
+                        agg_df["label"] = agg_df["pct"].astype(str) + "%"
+                    else:
+                        agg_df["label"] = agg_df[value_col].round(2).astype(str) + " (" + agg_df["pct"].astype(str) + "%)"
+
+                    st.write("Ringkasan agregasi:")
+                    st.dataframe(agg_df[[label_col, value_col, "pct"]], use_container_width=True)
+
+                    if numeric_chart_mode == "Pie":
+                        fig = px.pie(
+                            agg_df,
+                            names=label_col,
+                            values=value_col,
+                            hover_data=[value_col, "pct"]
+                        )
+                        fig.update_traces(textinfo="percent+label")
+                    else:
+                        fig = px.bar(
+                            agg_df,
+                            x=label_col,
+                            y=value_col,
+                            text="label",
+                            hover_data={value_col: True, "pct": True}
+                        )
+                        fig.update_layout(
+                            xaxis_title=label_col,
+                            yaxis_title=value_col
+                        )
+                        fig.update_traces(textposition="outside")
+
+                    st.plotly_chart(fig, use_container_width=True)
 
 # ---------- TAB 3: Crosstab ----------
 with tab3:
