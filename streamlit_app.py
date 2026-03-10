@@ -215,41 +215,88 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs(["📌 Kategori", "📈 Numerik", "🧮 C
 # ---------- TAB 1: Categorical ----------
 with tab1:
     st.subheader("📌 Distribusi kategori")
+
     if len(df.columns) == 0:
         st.warning("Sheet kosong setelah filter.")
         st.stop()
 
     default_col = cat_cols[0] if cat_cols else df.columns[0]
-    col_choice = st.selectbox("Pilih kolom kategori", options=list(df.columns), index=list(df.columns).index(default_col))
+    col_choice = st.selectbox(
+        "Pilih kolom kategori",
+        options=list(df.columns),
+        index=list(df.columns).index(default_col)
+    )
+
     top_n = st.slider("Top N kategori", min_value=5, max_value=60, value=20, step=1)
     chart_type = st.radio("Tipe chart", ["Bar", "Pie"], horizontal=True, index=0)
+
+    label_mode = st.radio(
+        "Label bar",
+        ["Count", "Percent", "Count + Percent"],
+        horizontal=True,
+        index=2
+    )
+
     show_missing = st.checkbox("Tampilkan Missing/Blank", value=False)
 
     s = normalize_series(df[col_choice])
     if not show_missing:
         s = s.dropna()
+
     vc = s.value_counts(dropna=show_missing).head(top_n).reset_index()
     vc.columns = [col_choice, "count"]
 
-    left, right = st.columns([1.2, 1])
-    with left:
-        if chart_type == "Pie":
-            fig = px.pie(vc, names=col_choice, values="count")
-        else:
-            fig = px.bar(vc, x=col_choice, y="count")
-            fig.update_layout(xaxis_title=col_choice, yaxis_title="Count")
-        st.plotly_chart(fig, use_container_width=True)
+    if vc.empty:
+        st.info("Tidak ada data yang bisa ditampilkan untuk kolom ini setelah filter.")
+    else:
+        vc["pct"] = (vc["count"] / vc["count"].sum() * 100).round(1)
 
-    with right:
-        total = len(df)
-        non_missing = int(df[col_choice].notna().sum())
-        missing = total - non_missing
-        st.subheader("Ringkasan")
-        st.metric("Total respon (filtered)", f"{total:,}")
-        st.metric("Non-missing", f"{non_missing:,}")
-        st.metric("Missing", f"{missing:,}")
-        st.write("Top kategori (tabel):")
-        st.dataframe(vc, use_container_width=True, height=360)
+        if label_mode == "Count":
+            vc["label"] = vc["count"].astype(str)
+        elif label_mode == "Percent":
+            vc["label"] = vc["pct"].astype(str) + "%"
+        else:
+            vc["label"] = vc["count"].astype(str) + " (" + vc["pct"].astype(str) + "%)"
+
+        left, right = st.columns([1.2, 1])
+
+        with left:
+            if chart_type == "Pie":
+                fig = px.pie(
+                    vc,
+                    names=col_choice,
+                    values="count",
+                    hover_data=["count", "pct"]
+                )
+                fig.update_traces(textinfo="percent+label")
+            else:
+                fig = px.bar(
+                    vc,
+                    x=col_choice,
+                    y="count",
+                    text="label",
+                    hover_data={"count": True, "pct": True}
+                )
+                fig.update_layout(
+                    xaxis_title=col_choice,
+                    yaxis_title="Count"
+                )
+                fig.update_traces(textposition="outside")
+
+            st.plotly_chart(fig, use_container_width=True)
+
+        with right:
+            total = len(df)
+            non_missing = int(df[col_choice].notna().sum())
+            missing = total - non_missing
+
+            st.subheader("Ringkasan")
+            st.metric("Total respon (filtered)", f"{total:,}")
+            st.metric("Non-missing", f"{non_missing:,}")
+            st.metric("Missing", f"{missing:,}")
+
+            st.write("Top kategori (tabel):")
+            st.dataframe(vc[[col_choice, "count", "pct"]], use_container_width=True, height=360)
 
 # ---------- TAB 2: Numeric ----------
 with tab2:
