@@ -91,22 +91,46 @@ def looks_like_likert(s: pd.Series) -> bool:
 
 def apply_filters(df: pd.DataFrame, filter_cols: list[str]) -> pd.DataFrame:
     out = df.copy()
+
     for c in filter_cols:
         s = out[c]
+
         if pd.api.types.is_numeric_dtype(s):
-            mn, mx = float(np.nanmin(s)), float(np.nanmax(s))
-            if np.isfinite(mn) and np.isfinite(mx):
-                rng = st.sidebar.slider(f"Filter {c}", mn, mx, (mn, mx))
-                out = out[out[c].between(rng[0], rng[1], inclusive="both")]
+            s_num = pd.to_numeric(s, errors="coerce")
+            s_num = s_num.replace([np.inf, -np.inf], np.nan)
+
+            if s_num.notna().sum() == 0:
+                st.sidebar.caption(f"{c}: tidak ada nilai numerik valid")
+                continue
+
+            mn = float(s_num.min())
+            mx = float(s_num.max())
+
+            # kalau semua nilainya sama, jangan pakai slider
+            if mn == mx:
+                st.sidebar.caption(f"{c}: semua nilainya sama ({mn})")
+                continue
+
+            rng = st.sidebar.slider(
+                f"Filter {c}",
+                min_value=mn,
+                max_value=mx,
+                value=(mn, mx)
+            )
+            out = out[s_num.between(rng[0], rng[1], inclusive="both")]
+
         elif pd.api.types.is_datetime64_any_dtype(s):
             dmin, dmax = out[c].min(), out[c].max()
             if pd.notna(dmin) and pd.notna(dmax):
                 dr = st.sidebar.date_input(
-                    f"Filter tanggal {c}", value=(dmin.date(), dmax.date())
+                    f"Filter tanggal {c}",
+                    value=(dmin.date(), dmax.date())
                 )
                 if isinstance(dr, (list, tuple)) and len(dr) == 2:
-                    start, end = pd.to_datetime(dr[0]), pd.to_datetime(dr[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                    start = pd.to_datetime(dr[0])
+                    end = pd.to_datetime(dr[1]) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
                     out = out[(out[c] >= start) & (out[c] <= end)]
+
         else:
             vals = normalize_series(s).dropna()
             uniq = sorted(vals.unique().tolist())
@@ -114,6 +138,7 @@ def apply_filters(df: pd.DataFrame, filter_cols: list[str]) -> pd.DataFrame:
                 chosen = st.sidebar.multiselect(f"Filter {c}", options=uniq, default=[])
                 if chosen:
                     out = out[normalize_series(out[c]).isin(chosen)]
+
     return out
 
 def to_excel_bytes(dfs: dict[str, pd.DataFrame]) -> bytes:
